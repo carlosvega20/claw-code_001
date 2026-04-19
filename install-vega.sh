@@ -84,23 +84,45 @@ print_banner
 
 step "Checking prerequisites"
 
-MISSING=0
-for cmd in curl; do
-    command -v "${cmd}" >/dev/null 2>&1 && ok "${cmd} found" || { warn "${cmd} not found (optional)"; }
-done
+# curl is required (vega uses it to health-check the bonsai server)
+command -v curl >/dev/null 2>&1 \
+    && ok "curl found" \
+    || die "curl not found. Install it: brew install curl  (or: sudo apt-get install curl)"
 
 if [ "${NO_BUILD}" -eq 0 ]; then
-    # Source rustup env if rustc not found on PATH
+    # Auto-source rustup env if rustc not on PATH yet
     if ! command -v rustc >/dev/null 2>&1; then
         if [ -f "${HOME}/.cargo/env" ]; then
             # shellcheck source=/dev/null
             source "${HOME}/.cargo/env"
         fi
     fi
-    command -v rustc >/dev/null 2>&1 || die "rustc not found. Install Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-    command -v cargo >/dev/null 2>&1 || die "cargo not found. Install Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    if ! command -v rustc >/dev/null 2>&1; then
+        cat >&2 <<'RUST_HELP'
+  error rustc not found in PATH.
+
+  Install Rust with:
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    source "$HOME/.cargo/env"
+
+  Then re-run this installer.
+RUST_HELP
+        exit 1
+    fi
     ok "rustc $(rustc --version 2>/dev/null | cut -d' ' -f2)"
     ok "cargo $(cargo --version 2>/dev/null | cut -d' ' -f2)"
+fi
+
+# Warn if bonsai_core_001 does not look set up
+BONSAI_DIR="${HOME}/code/bonsai_core_001"
+if [ ! -d "${BONSAI_DIR}" ]; then
+    warn "bonsai_core_001 not found at ${BONSAI_DIR}"
+    warn "clone it: git clone https://github.com/carlosvega20/bonsai_core_001 ${BONSAI_DIR}"
+elif [ ! -d "${BONSAI_DIR}/.venv" ]; then
+    warn "bonsai_core_001 venv not set up — run:"
+    warn "  cd ${BONSAI_DIR} && python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+else
+    ok "bonsai_core_001 found at ${BONSAI_DIR}"
 fi
 
 # ── Step 2: build ─────────────────────────────────────────────────────────────
@@ -176,13 +198,36 @@ ok "vega installed to ${VEGA_SCRIPT}"
 
 step "Verifying installation"
 
+PATH_ADDED=0
 if command -v vega >/dev/null 2>&1; then
     ok "vega is already on your PATH"
 else
     warn "vega is not yet on your PATH"
-    warn "add this to ~/.zshrc or ~/.bashrc:"
-    printf '\n    %sexport PATH="%s:\$PATH"%s\n\n' "${BOLD}" "${INSTALL_DIR}" "${RESET}"
-    printf '  then reload: %ssource ~/.zshrc%s\n' "${BOLD}" "${RESET}"
+    # Auto-append to shell profile if user consents (non-interactive: just print)
+    SHELL_PROFILE=""
+    if [ -f "${HOME}/.zshrc" ]; then SHELL_PROFILE="${HOME}/.zshrc"
+    elif [ -f "${HOME}/.bashrc" ]; then SHELL_PROFILE="${HOME}/.bashrc"
+    elif [ -f "${HOME}/.bash_profile" ]; then SHELL_PROFILE="${HOME}/.bash_profile"
+    fi
+
+    if [ -n "${SHELL_PROFILE}" ]; then
+        if ! grep -q "${INSTALL_DIR}" "${SHELL_PROFILE}" 2>/dev/null; then
+            {
+                echo ""
+                echo "# Added by install-vega.sh ($(date +%Y-%m-%d)) — vega CLI"
+                echo "export PATH=\"${INSTALL_DIR}:\$PATH\""
+                echo "[ -f \"\$HOME/.cargo/env\" ] && source \"\$HOME/.cargo/env\""
+            } >> "${SHELL_PROFILE}"
+            ok "PATH added to ${SHELL_PROFILE}"
+            PATH_ADDED=1
+        else
+            ok "${INSTALL_DIR} already in ${SHELL_PROFILE}"
+        fi
+    else
+        warn "add this to your shell profile:"
+        printf '\n    %sexport PATH="%s:\$PATH"%s\n' "${BOLD}" "${INSTALL_DIR}" "${RESET}"
+        printf '    %s[ -f "\$HOME/.cargo/env" ] && source "\$HOME/.cargo/env"%s\n\n' "${BOLD}" "${RESET}"
+    fi
 fi
 
 cat <<EOF
@@ -205,5 +250,13 @@ ${BOLD}Getting started:${RESET}
   ${DIM}# 3. Override the inference model${RESET}
   BONSAI_MODEL=ollama:llama3.2 vega "task"
 
+  ${DIM}# 4. Run a health check inside the REPL${RESET}
+  vega → /doctor
+
 For full documentation see: ${BOLD}VEGA.md${RESET}
 EOF
+
+if [ "${PATH_ADDED}" -eq 1 ]; then
+    printf '\n%s  →%s Reload your shell: %ssource %s%s\n\n' \
+        "${CYAN}" "${RESET}" "${BOLD}" "${SHELL_PROFILE}" "${RESET}"
+fi

@@ -1,13 +1,42 @@
 # Vega — Local AI Coding Assistant
 
-Vega is the `claw-code` CLI pre-configured to run against your local
-[bonsai_core_001](https://github.com/carlosvega20/bonsai_core_001) inference
-server. It gives you the same interactive coding-agent experience as Claude Code
-CLI, but **everything runs on your machine** — no cloud API key, no data sent
-to Anthropic, 100% offline.
+Vega gives you the same interactive coding-agent experience as Claude Code CLI,
+but everything runs on your machine — no Anthropic account, no API key, no data
+sent anywhere. 100% offline, 100% local.
 
+```bash
+vega "create a React todo app and run it"
 ```
-vega "refactor this module to use async/await"
+
+---
+
+## Quick Start (TL;DR)
+
+```bash
+# 1 — Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# 2 — Set up bonsai inference server
+git clone https://github.com/carlosvega20/bonsai_core_001 ~/code/bonsai_core_001
+cd ~/code/bonsai_core_001
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# 3 — Install vega CLI
+git clone https://github.com/carlosvega20/claw-code_001 ~/code/claw-code_001
+cd ~/code/claw-code_001 && bash install-vega.sh
+
+# 4 — Add vega to PATH (paste into ~/.zshrc or ~/.bashrc)
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+echo '[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"' >> ~/.zshrc
+source ~/.zshrc
+
+# 5 — Start the inference server (keep this terminal open, or run in background)
+cd ~/code/bonsai_core_001 && bash start.sh
+
+# 6 — Use vega
+vega "explain this codebase"
 ```
 
 ---
@@ -15,149 +44,175 @@ vega "refactor this module to use async/await"
 ## How it works
 
 ```
-vega (shell script)
-  │  sets ANTHROPIC_BASE_URL=http://localhost:9001
-  │        ANTHROPIC_API_KEY=bonsai-local
+vega (shell wrapper)
+  │  ANTHROPIC_BASE_URL=http://localhost:9001
+  │  ANTHROPIC_API_KEY=bonsai-local
   ▼
-claw-vega (Rust CLI binary — claw-code fork)
-  │  same UX as Claude Code: REPL, one-shot, tool calls, sessions
+claw-vega (Rust CLI — claw-code fork, same UX as claude CLI)
+  │  interactive REPL · one-shot · tool calls · sessions
   ▼
-bonsai_core_001 (FastAPI, port 9001)
-  │  Anthropic-compat shim — accepts claude-* model names, routes locally
+bonsai_core_001 (FastAPI REST API, port 9001)
+  │  Anthropic-compatible /v1/messages endpoint
+  │  automatically routes cloud model names → local inference
   ▼
-bonsai-2bit (MLX, Apple Silicon, fully offline)
+bonsai-2bit (MLX quantized model, Apple Silicon, fully offline)
 ```
-
-Vega is identical to `claw` in every way — same flags, same REPL, same tool
-approval flow — except it requires no Anthropic account and runs on local
-hardware.
 
 ---
 
-## Prerequisites
+## System Requirements
 
-| Requirement | How to get it |
-|---|---|
-| macOS (Apple Silicon recommended) | — |
-| Rust toolchain | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| bonsai_core_001 server | see below |
-| Bonsai model files | bundled with bonsai_core_001 |
+| Requirement | Version | Notes |
+|---|---|---|
+| macOS | 12+ | Apple Silicon (M1/M2/M3/M4) strongly recommended for MLX inference |
+| Python | **3.11 or 3.12** | System Python (3.9/3.10) will fail. Install via `brew install python@3.12` |
+| Rust | stable | Installed by `rustup` — see below |
+| curl | any | Used by vega to health-check the server |
+| Node.js / npm | optional | Only needed if you ask vega to work on JS/TS projects |
 
-### Install Rust (if not already installed)
+> **Apple Silicon required for offline inference.** The default bonsai-2bit model runs on MLX,
+> which is Apple Silicon only. On Intel Macs you can still use vega by running
+> an Ollama model (`BONSAI_MODEL=ollama:llama3.2`), but performance will be limited.
+
+---
+
+## Step-by-step Installation
+
+### Step 1 — Install Rust
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# follow the prompts, accept defaults
 source "$HOME/.cargo/env"
 ```
 
-### Set up bonsai_core_001
-
+Verify:
 ```bash
-# Clone (if you don't have it)
-git clone https://github.com/carlosvega20/bonsai_core_001 ~/code/bonsai_core_001
-
-# Create the virtual environment and install dependencies
-cd ~/code/bonsai_core_001
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+rustc --version   # rustc 1.XX.0 ...
+cargo --version   # cargo 1.XX.0 ...
 ```
 
----
+Add to your shell profile so `cargo` is available in all future terminals:
+```bash
+echo '[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"' >> ~/.zshrc
+```
 
-## Installation
+### Step 2 — Install Python 3.12 (if not already installed)
 
 ```bash
-# Clone this repo (if you don't have it)
+# Check what you have
+python3 --version
+
+# If < 3.11, install 3.12 with Homebrew:
+brew install python@3.12
+```
+
+### Step 3 — Set up bonsai_core_001 (inference server)
+
+```bash
+mkdir -p ~/code
+git clone https://github.com/carlosvega20/bonsai_core_001 ~/code/bonsai_core_001
+cd ~/code/bonsai_core_001
+
+# Create a virtual environment with Python 3.12
+python3.12 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Smoke-test that it works (should print status: ok)
+python3 -c "from bonsai.models.mlx_backend import MLXBackend; print('MLX ok')"
+```
+
+### Step 4 — Build and install vega
+
+```bash
 git clone https://github.com/carlosvega20/claw-code_001 ~/code/claw-code_001
 cd ~/code/claw-code_001
 
-# Build claw and install vega to ~/.local/bin
 bash install-vega.sh
+# → builds the claw release binary (~30-60s first time)
+# → installs vega wrapper to ~/.local/bin/vega
 ```
 
-Add `~/.local/bin` to your PATH if it isn't already (add to `~/.zshrc` or `~/.bashrc`):
+### Step 5 — Add to PATH
+
+Add these two lines to your `~/.zshrc` (or `~/.bashrc`):
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 ```
 
-Reload your shell:
-
+Reload:
 ```bash
-source ~/.zshrc   # or source ~/.bashrc
+source ~/.zshrc
 ```
 
 Verify:
-
 ```bash
-vega --version
+which vega      # /Users/yourname/.local/bin/vega
+vega --version  # Claw Code / Version 0.1.0 ...
 ```
 
-### Install options
+### Step 6 — Start the inference server
 
 ```bash
-bash install-vega.sh                        # release build → ~/.local/bin/vega
-bash install-vega.sh --prefix /usr/local    # installs to /usr/local/bin/vega
-bash install-vega.sh --debug                # debug build (faster compile)
-bash install-vega.sh --no-build             # skip cargo, use existing binary
+# In a dedicated terminal (keeps logs visible):
+cd ~/code/bonsai_core_001 && bash start.sh
+
+# Or in background:
+cd ~/code/bonsai_core_001 && bash start.sh &>/tmp/bonsai.log &
 ```
 
----
-
-## Starting the bonsai server
-
-Vega requires `bonsai_core_001` to be running before you use it. Start it in
-a separate terminal (or as a background service):
-
+Wait 2–3 seconds, then check:
 ```bash
-cd ~/code/bonsai_core_001
-bash start.sh
+curl http://localhost:9001/health
+# {"status":"ok","mlx":true}
 ```
 
-The server starts on `http://localhost:9001`. Vega checks that it's up before
-every invocation and prints a clear error with instructions if it's not.
-
-### Auto-start (optional)
-
-To have the server start automatically when you log in, add this to your shell
-profile (`~/.zshrc` or `~/.bashrc`):
+### Step 7 — First run
 
 ```bash
-# Auto-start bonsai_core_001 if not running
-if ! curl -sf http://localhost:9001/health >/dev/null 2>&1; then
-    (cd ~/code/bonsai_core_001 && bash start.sh &>/tmp/bonsai_core.log &)
-fi
+vega --version          # version check
+vega "say hello"        # quick smoke test
+```
+
+Inside the REPL:
+```
+/doctor    ← runs built-in health check — do this first!
+/help      ← all slash commands
 ```
 
 ---
 
 ## Usage
 
-### Interactive REPL
+### Interactive REPL (like `claude` CLI)
 
 ```bash
 vega
 ```
 
-You get a full interactive agent session — type tasks, approve tool calls, use
-slash commands. Type `/help` inside the REPL for all commands.
+Type tasks in plain English. Vega reads your code, edits files, runs commands,
+and asks for approval before anything risky.
 
 ### One-shot prompt
 
 ```bash
-vega "explain the main function in main.py"
-vega "write a unit test for the User model"
-vega "add error handling to the API endpoints"
+vega "create a FastAPI hello-world in this folder"
+vega "add unit tests for the User model"
+vega "refactor all print() to use logging"
 ```
 
-### Skip tool-call approval prompts
+### Skip per-tool approval (danger mode)
 
 ```bash
-vega --dangerously-skip-permissions "refactor all print statements to use logging"
+vega --dangerously-skip-permissions "scaffold a React project and run it"
 ```
 
-### Compact output (pipe-friendly)
+### Pipe-friendly compact output
 
 ```bash
 vega --output-format text --compact "summarize this repo" > summary.txt
@@ -166,96 +221,83 @@ vega --output-format text --compact "summarize this repo" > summary.txt
 ### Resume a previous session
 
 ```bash
-vega --resume latest              # continue the most recent session
-vega --resume SESSION.jsonl       # continue a specific session file
+vega --resume latest
+vega --resume path/to/session.jsonl
 ```
 
 ### Run a health check
 
-```bash
+```
 vega
-/doctor
+> /doctor
 ```
 
 ---
 
 ## Model selection
 
-Vega routes all requests to your local bonsai inference server. The model that
-runs is controlled by the server, not the client.
-
-| Environment variable | Default | Description |
+| Variable | Default | Description |
 |---|---|---|
-| `BONSAI_URL` | `http://localhost:9001` | Address of the bonsai server |
-| `BONSAI_MODEL` | `bonsai-2bit` | Inference model to use |
+| `BONSAI_MODEL` | `bonsai-2bit` | Inference model (`bonsai-1bit`, `ollama:llama3.2`, etc.) |
+| `BONSAI_URL` | `http://localhost:9001` | Address of bonsai_core_001 server |
 
 ```bash
-# Use a different local model
-BONSAI_MODEL=bonsai-1bit vega "task"
-BONSAI_MODEL=ollama:llama3.2 vega "task"
-
-# Point vega at a bonsai server on another machine
-BONSAI_URL=http://192.168.1.42:9001 vega "task"
+BONSAI_MODEL=ollama:llama3.2 vega "task"           # use Ollama instead
+BONSAI_URL=http://192.168.1.10:9001 vega "task"    # remote bonsai server
 ```
 
-Available models depend on what bonsai_core_001 has configured. Check:
-
+Check available models:
 ```bash
-curl http://localhost:9001/v1/models | python3 -m json.tool
+curl -s http://localhost:9001/v1/models | python3 -m json.tool
 ```
 
 ---
 
-## All supported flags
+## Auto-start bonsai server
 
-Vega passes all flags directly to claw. Full flag reference:
+To have the server start automatically when you open a terminal, add to `~/.zshrc`:
+
+```bash
+# Auto-start bonsai_core_001 if not running
+if ! curl -sf http://localhost:9001/health >/dev/null 2>&1; then
+    (cd ~/code/bonsai_core_001 && bash start.sh &>/tmp/bonsai.log &)
+fi
+```
+
+---
+
+## All vega flags
 
 ```bash
 vega --help
 ```
 
-Common flags:
-
 | Flag | Description |
 |---|---|
-| `--model MODEL` | Override model name shown in UI (does not change inference backend) |
+| `--dangerously-skip-permissions` | Skip per-tool approval (use in trusted environments) |
 | `--output-format text\|json` | Output format for non-interactive mode |
-| `--compact` | Strip tool call details, print only final text |
-| `--dangerously-skip-permissions` | Skip per-tool approval prompts |
+| `--compact` | Print only final assistant text (no tool call details) |
+| `--resume SESSION` | Resume a previous session by file path or `latest` |
+| `--allowedTools TOOL,...` | Restrict which tools vega can use |
 | `--permission-mode MODE` | `read-only`, `workspace-write`, or `danger-full-access` |
-| `--allowedTools TOOL,...` | Restrict which tools can be used |
-| `--resume SESSION` | Resume a previous session |
 
 ---
 
-## Slash commands (inside the REPL)
+## Vega vs Claude Code CLI
 
-| Command | Description |
-|---|---|
-| `/help` | List all slash commands |
-| `/doctor` | Health check — auth, config, tools, sandbox |
-| `/compact` | Compress the current session context |
-| `/clear` | Clear the conversation and start fresh |
-| `/status` | Show current session state |
-
----
-
-## Differences from Claude Code CLI
-
-| Feature | `claude` (Claude Code) | `vega` (this) |
+| | `claude` | `vega` |
 |---|---|---|
 | Inference | Anthropic cloud | Local bonsai model |
-| API key | Required (`sk-ant-*`) | Not needed |
-| Internet | Required | Not required |
+| API key required | Yes (`sk-ant-*`) | No |
+| Internet required | Yes | No |
 | Model | claude-opus / sonnet / haiku | bonsai-2bit (default) |
-| Tool calls | Cloud-executed | Local, same approval flow |
-| Sessions | Stored locally | Stored locally (same format) |
-| Cost | Per-token billing | Free (local compute) |
+| Cost | Per-token billing | Free (your hardware) |
 | Privacy | Data sent to Anthropic | Stays on your machine |
-
-Everything else is identical: REPL, flags, slash commands, session files,
-`/doctor`, tool approval, `--output-format`, `--resume`, and all other
-CLI features.
+| REPL | ✓ | ✓ (identical) |
+| Slash commands | ✓ | ✓ (identical) |
+| Sessions / resume | ✓ | ✓ (identical) |
+| Tool approval flow | ✓ | ✓ (identical) |
+| `--output-format` | ✓ | ✓ (identical) |
 
 ---
 
@@ -267,33 +309,65 @@ CLI features.
 cd ~/code/bonsai_core_001 && bash start.sh
 ```
 
-### `vega: claw binary not found`
+### `vega: command not found`
 
 ```bash
-cd ~/code/claw-code_001 && bash install-vega.sh
+# Check it was installed
+ls ~/.local/bin/vega
+
+# Add to PATH
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
-### Model is slow or timing out
-
-The first request after server startup is slower (model loading). Subsequent
-requests are fast. If it's consistently slow, check the server logs:
+### `cargo: command not found` during install-vega.sh
 
 ```bash
-tail -f /tmp/bonsai_core.log
+source "$HOME/.cargo/env"
+# Then re-run:
+bash install-vega.sh
 ```
 
-### Check server health manually
+### MLX import error when starting bonsai server
 
 ```bash
-curl http://localhost:9001/health
-# {"status":"ok","mlx":true}
+# Make sure you're using Python 3.11+ and the venv is active
+source ~/code/bonsai_core_001/.venv/bin/activate
+python3 --version   # must be 3.11 or 3.12
+
+# If wrong version, recreate venv with explicit Python:
+cd ~/code/bonsai_core_001
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### Rebuilding after code changes
+### Server health check fails (`mlx: false`)
+
+MLX requires Apple Silicon. On Intel Macs, use Ollama:
 
 ```bash
-cd ~/code/claw-code_001 && bash install-vega.sh --no-build   # reinstall wrapper only
-cd ~/code/claw-code_001 && bash install-vega.sh               # full rebuild + install
+# Install Ollama: https://ollama.com
+ollama pull llama3.2
+BONSAI_MODEL=ollama:llama3.2 vega "task"
+```
+
+### Model is slow on the first request
+
+The first request after server startup loads the model weights (~5–10 seconds).
+Every request after that is fast. This is expected.
+
+### Check server logs
+
+```bash
+tail -f /tmp/bonsai.log    # if started in background
+# or read the terminal where you ran: bash start.sh
+```
+
+### Rebuild vega after updates
+
+```bash
+cd ~/code/claw-code_001 && git pull && bash install-vega.sh
 ```
 
 ---
@@ -301,11 +375,10 @@ cd ~/code/claw-code_001 && bash install-vega.sh               # full rebuild + i
 ## Updating
 
 ```bash
-cd ~/code/claw-code_001
-git pull
-bash install-vega.sh
+# Update bonsai server
+cd ~/code/bonsai_core_001 && git pull
+# restart: bash start.sh
 
-cd ~/code/bonsai_core_001
-git pull
-# restart the server: bash start.sh
+# Update vega CLI
+cd ~/code/claw-code_001 && git pull && bash install-vega.sh
 ```
