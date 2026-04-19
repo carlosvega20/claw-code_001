@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# vega — local AI coding assistant backed by bonsai_core_001
+#
+# Vega is the claw-code CLI pre-configured to use your local bonsai inference
+# server. It provides the same experience as Claude Code CLI but runs entirely
+# on your machine — no cloud API key, no data leaving your local network.
+#
+# Prerequisites:
+#   bonsai_core_001 running on port 9001
+#   Start it with: cd ~/code/bonsai_core_001 && bash start.sh
+#
+# Usage:
+#   vega                                          # interactive REPL
+#   vega "create a fastapi hello world"           # one-shot prompt
+#   vega --dangerously-skip-permissions "task"    # skip per-tool approval
+#   vega --model bonsai-2bit "task"               # explicit model (display only)
+#   BONSAI_DEFAULT_MODEL=ollama:llama3.2 vega     # override inference model
+#
+# Environment overrides:
+#   BONSAI_URL    bonsai API base URL  (default: http://localhost:9001)
+#   BONSAI_MODEL  inference model      (forwarded as BONSAI_DEFAULT_MODEL)
+
+set -euo pipefail
+
+BONSAI_URL="${BONSAI_URL:-http://localhost:9001}"
+
+# ── Locate the claw binary ────────────────────────────────────────────────────
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+BINARY=""
+for candidate in \
+    "${SCRIPT_DIR}/rust/target/release/claw" \
+    "${SCRIPT_DIR}/rust/target/debug/claw" \
+    "$(command -v claw 2>/dev/null || true)"; do
+    if [ -x "${candidate}" ]; then
+        BINARY="${candidate}"
+        break
+    fi
+done
+
+if [ -z "${BINARY}" ]; then
+    cat >&2 <<'MSG'
+vega: claw binary not found.
+
+Build it first:
+  cd rust && cargo build --release
+
+Or run the installer:
+  bash install-vega.sh
+
+MSG
+    exit 1
+fi
+
+# ── Health-check the bonsai server ───────────────────────────────────────────
+
+if ! curl -sf "${BONSAI_URL}/health" >/dev/null 2>&1; then
+    cat >&2 <<MSG
+vega: bonsai_core_001 is not running at ${BONSAI_URL}
+
+Start it with:
+  cd ~/code/bonsai_core_001 && bash start.sh
+
+Or set BONSAI_URL if it runs on a different address.
+MSG
+    exit 1
+fi
+
+# ── Forward any BONSAI_MODEL override ────────────────────────────────────────
+
+if [ -n "${BONSAI_MODEL:-}" ]; then
+    export BONSAI_DEFAULT_MODEL="${BONSAI_MODEL}"
+fi
+
+# ── Launch claw pointed at bonsai ─────────────────────────────────────────────
+
+export ANTHROPIC_BASE_URL="${BONSAI_URL}"
+export ANTHROPIC_API_KEY="bonsai-local"
+
+exec "${BINARY}" "$@"
